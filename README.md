@@ -2,3 +2,4 @@
 2. HARDCODED DEVICE ID, HARDCODED AREA
 3. EDITABLE WITHOUT RECOMPILATION
 4. WIP
+5. .exe will be configurable by editing it in notepad
