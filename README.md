@@ -10,6 +10,6 @@ lowest cpu usage of any osu tablet driver, perma 0.01% on 1core 11900k
 
 lowest io usage of any osu tablet driver, perma 1.86-2.01kb/s
 
-10 from tablet + 4 non-zero from vmulti = 1.93kb
+10 bytes from tablet + 4 non-zero bytes from vmulti = 1.93kb
 
 100% efficiency apparently
