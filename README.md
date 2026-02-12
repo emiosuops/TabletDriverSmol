@@ -16,3 +16,6 @@ lowest io usage of any osu tablet driver, perma 1.86-2.01kb/s
 
 
 I lost most recent ver so uploading this to keep it -_-
+
+
+Some tablets need setfeature, don't recommend trying this
