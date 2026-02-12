@@ -13,3 +13,6 @@ lowest io usage of any osu tablet driver, perma 1.86-2.01kb/s
 10 bytes from tablet + 4 non-zero bytes from vmulti = 1.93kb
 
 100% efficiency apparently
+
+
+I lost most recent ver so uploading this to keep it -_-
