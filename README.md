@@ -6,16 +6,7 @@
 
 all code fits in 1 page on disk and in ram (sub 4 kb)
 
-lowest cpu usage of any osu tablet driver, perma 0.01% on 1core 11900k
-
-lowest io usage of any osu tablet driver, perma 1.86-2.01kb/s
-
-10 bytes from tablet + 4 non-zero bytes from vmulti = 1.93kb
-
-100% efficiency apparently
+lowest cpu usage of any osu tablet driver aka 0.00% perma (11900k)
 
 
-I lost most recent ver so uploading this to keep it -_-
-
-
-Some tablets need setfeature, don't recommend trying this
+Some tablets need setfeature, don't recommend trying this + the driver is UB and will bsod at some point
