@@ -1,224 +1,277 @@
-
-#include <wtypesbase.h>
-//#include <minwindef.h>
-//#include <stdint.h>
-//#include <stdio.h>
-#include <SetupAPI.h>
-#include <hidsdi.h>
-#include <memoryapi.h>
-#include <fileapi.h>
-
-#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <setupapi.h>
+#include "hiddll.h"
+#include <hidclass.h>
 
 
-// Manual "device view" struct
+#ifndef BOOL
+typedef int BOOL;
+#endif
+
+/////////
+BOOL SetOutputReportRaw(
+HANDLE device,
+const void* report,
+DWORD reportLength
+) {
+    DWORD bytesReturned;
+
+    return DeviceIoControl(
+        device,
+        IOCTL_HID_SET_OUTPUT_REPORT,
+        (LPVOID)report,
+        reportLength,
+        NULL,
+        0,
+        &bytesReturned,
+        NULL
+    );
+}
+
+BOOLEAN __stdcall
+Hid_GetAttributes (
+    IN  HANDLE              HidDeviceObject,
+    OUT PHIDD_ATTRIBUTES    Attributes
+    )
+/*++
+Routine Description:
+    Please see hidsdi.h for explination
+
+--*/
+{
+    HID_COLLECTION_INFORMATION  info;
+    ULONG                       bytes;
+
+    if (! DeviceIoControl (HidDeviceObject,
+                           IOCTL_HID_GET_COLLECTION_INFORMATION,
+                           0, 0,
+                           &info, sizeof (info),
+                           &bytes, NULL)) {
+        return FALSE;
+    }
+
+    Attributes->Size = sizeof (HIDD_ATTRIBUTES);
+    Attributes->VendorID = info.VendorID;
+    Attributes->ProductID = info.ProductID;
+    Attributes->VersionNumber = info.VersionNumber;
+
+    return TRUE;
+}
+///////////
+// Struct for our device view
 struct HIDDeviceView {
-	HANDLE deviceHandle;
-	USHORT vendorId;
-	USHORT productId;
-	USHORT usagePage;
-	USHORT usage;
+    HANDLE deviceHandle;
+    USHORT vendorId;
+    USHORT productId;
+    USHORT usagePage;
+    USHORT usage;
 } HIDView;
 
+typedef HDEVINFO(WINAPI* PtrGetClassDevs)(const GUID*, PCWSTR, HWND, DWORD);
+typedef BOOL(WINAPI* PtrEnumDeviceInterfaces)(HDEVINFO, PSP_DEVINFO_DATA, const GUID*, DWORD, PSP_DEVICE_INTERFACE_DATA);
+typedef BOOL(WINAPI* PtrGetDeviceInterfaceDetail)(HDEVINFO, PSP_DEVICE_INTERFACE_DATA, PSP_DEVICE_INTERFACE_DETAIL_DATA_W, DWORD, PDWORD, PSP_DEVINFO_DATA);
+typedef BOOL(WINAPI* PtrDestroyDeviceInfoList)(HDEVINFO);
 
-
-
-
-
-
+// Function pointers struct
 struct SetupApiFns {
-	HMODULE hDll;
-	HDEVINFO(WINAPI *GetClassDevs)(const GUID*, PCWSTR, HWND, DWORD);
-	FARPROC(WINAPI *EnumDeviceInterfaces)(HDEVINFO, PSP_DEVINFO_DATA, const GUID*, DWORD, PSP_DEVICE_INTERFACE_DATA);
-	FARPROC(WINAPI *GetDeviceInterfaceDetail)(HDEVINFO, PSP_DEVICE_INTERFACE_DATA, PSP_DEVICE_INTERFACE_DETAIL_DATA_W, DWORD, PDWORD, PSP_DEVINFO_DATA);
-	FARPROC(WINAPI *DestroyDeviceInfoList)(HDEVINFO);
+    HMODULE hDll;
+    PtrGetClassDevs GetClassDevs;
+    PtrEnumDeviceInterfaces EnumDeviceInterfaces;
+    PtrGetDeviceInterfaceDetail GetDeviceInterfaceDetail;
+    PtrDestroyDeviceInfoList DestroyDeviceInfoList;
 };
 
 int LoadSetupApi(struct SetupApiFns* fns) {
-	fns->hDll = GetModuleHandle(L"SetupAPI.dll");
-	fns->GetClassDevs = reinterpret_cast<decltype(fns->GetClassDevs)>(
-		GetProcAddress(fns->hDll, "SetupDiGetClassDevsW")
-		);
-	fns->EnumDeviceInterfaces = reinterpret_cast<decltype(fns->EnumDeviceInterfaces)>(
-		GetProcAddress(fns->hDll, "SetupDiEnumDeviceInterfaces")
-		);
-	fns->GetDeviceInterfaceDetail = reinterpret_cast<decltype(fns->GetDeviceInterfaceDetail)>(
-		GetProcAddress(fns->hDll, "SetupDiGetDeviceInterfaceDetailW")
-		);
-	fns->DestroyDeviceInfoList = reinterpret_cast<decltype(fns->DestroyDeviceInfoList)>(
-		GetProcAddress(fns->hDll, "SetupDiDestroyDeviceInfoList")
-		);
+    fns->hDll = GetModuleHandleW(L"SetupAPI.dll");
 
+    fns->GetClassDevs = (PtrGetClassDevs)GetProcAddress(fns->hDll, "SetupDiGetClassDevsW");
+    fns->EnumDeviceInterfaces = (PtrEnumDeviceInterfaces)GetProcAddress(fns->hDll, "SetupDiEnumDeviceInterfaces");
+    fns->GetDeviceInterfaceDetail = (PtrGetDeviceInterfaceDetail)GetProcAddress(fns->hDll, "SetupDiGetDeviceInterfaceDetailW");
+    fns->DestroyDeviceInfoList = (PtrDestroyDeviceInfoList)GetProcAddress(fns->hDll, "SetupDiDestroyDeviceInfoList");
 
-	return fns->GetClassDevs && fns->EnumDeviceInterfaces &&
-		fns->GetDeviceInterfaceDetail && fns->DestroyDeviceInfoList;
+    return (fns->GetClassDevs && fns->EnumDeviceInterfaces &&
+        fns->GetDeviceInterfaceDetail && fns->DestroyDeviceInfoList);
 }
 
 int OpenDevice(HANDLE* handle, USHORT vendorId, USHORT productId, USHORT usagePage, USHORT usage) {
+    struct SetupApiFns fns;
+    HDEVINFO deviceInfo;
+    SP_DEVICE_INTERFACE_DATA deviceInterfaceData;
+    DWORD dwMemberIdx = 0;
+    HANDLE resultHandle = INVALID_HANDLE_VALUE;
 
+    // {4D1E55B2-F16F-11CF-88CB-001111000030}
+    static const GUID hidGuid = {
+        0x4D1E55B2, 0xF16F, 0x11CF,
+        { 0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30 }
+    };
 
-	struct SetupApiFns fns;
-	if (!LoadSetupApi(&fns)) return 0;
+    if (!LoadSetupApi(&fns)) return 0;
 
-	HDEVINFO deviceInfo;
-	deviceInfo = INVALID_HANDLE_VALUE;
+    deviceInfo = fns.GetClassDevs(&hidGuid, NULL, 0, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
+    if (deviceInfo == INVALID_HANDLE_VALUE) return FALSE;
 
-	static const GUID hidGuid = {
-		0x4D1E55B2, 0xF16F, 0x11CF,
-		{ 0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30 }
-	};
+    deviceInterfaceData.cbSize = sizeof(deviceInterfaceData);
 
-	deviceInfo = fns.GetClassDevs(&hidGuid, NULL, 0, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
-	if (deviceInfo == INVALID_HANDLE_VALUE) return false;
+    while (fns.EnumDeviceInterfaces(deviceInfo, NULL, &hidGuid, dwMemberIdx, &deviceInterfaceData)) {
+        DWORD dwSize = 0;
+        PSP_DEVICE_INTERFACE_DETAIL_DATA_W deviceInterfaceDetailData;
+        SP_DEVINFO_DATA deviceInfoData;
+        HANDLE deviceHandle;
+        HIDD_ATTRIBUTES hidAttributes;
+        PHIDP_PREPARSED_DATA hidPreparsedData = NULL;
+        HIDP_CAPS hidCapabilities;
+        NTSTATUS capsStatus;
 
-	SP_DEVICE_INTERFACE_DATA deviceInterfaceData;
-	deviceInterfaceData.cbSize = sizeof(deviceInterfaceData);
+        // Get required size
+        fns.GetDeviceInterfaceDetail(deviceInfo, &deviceInterfaceData, NULL, 0, &dwSize, NULL);
+        if (dwSize == 0) {
+            dwMemberIdx++;
+            continue;
+        }
 
-	DWORD dwMemberIdx = 0;
-	HANDLE resultHandle = INVALID_HANDLE_VALUE;
+        deviceInterfaceDetailData = (PSP_DEVICE_INTERFACE_DETAIL_DATA_W)VirtualAlloc(NULL, dwSize, MEM_COMMIT, PAGE_READWRITE);
+        if (!deviceInterfaceDetailData) {
+            dwMemberIdx++;
+            continue;
+        }
 
-	while (fns.EnumDeviceInterfaces(deviceInfo, NULL, &hidGuid, dwMemberIdx, &deviceInterfaceData)) {
-		DWORD dwSize = 0;
-		fns.GetDeviceInterfaceDetail(deviceInfo, &deviceInterfaceData, NULL, 0, &dwSize, NULL);
-		if (dwSize == 0) { dwMemberIdx++; continue; }
+        deviceInterfaceDetailData->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+        deviceInfoData.cbSize = sizeof(deviceInfoData);
 
-		PSP_DEVICE_INTERFACE_DETAIL_DATA_W deviceInterfaceDetailData =
-			(PSP_DEVICE_INTERFACE_DETAIL_DATA_W)VirtualAlloc(NULL, dwSize, MEM_COMMIT, PAGE_READWRITE);
-		if (!deviceInterfaceDetailData) { dwMemberIdx++; continue; }
+        if (!fns.GetDeviceInterfaceDetail(deviceInfo, &deviceInterfaceData, deviceInterfaceDetailData, dwSize, &dwSize, &deviceInfoData)) {
+            VirtualFree(deviceInterfaceDetailData, 0, MEM_RELEASE);
+            dwMemberIdx++;
+            continue;
+        }
 
-		deviceInterfaceDetailData->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
-		SP_DEVINFO_DATA deviceInfoData;
-		deviceInfoData.cbSize = sizeof(deviceInfoData);
+        deviceHandle = CreateFileW(
+            deviceInterfaceDetailData->DevicePath,
+            GENERIC_READ | GENERIC_WRITE,
+            NULL,
+            NULL,
+            OPEN_EXISTING,
+            0,
+            NULL
+        );
 
-		if (!fns.GetDeviceInterfaceDetail(deviceInfo, &deviceInterfaceData, deviceInterfaceDetailData, dwSize, &dwSize, &deviceInfoData)) {
-			VirtualFree(deviceInterfaceDetailData, 0, MEM_RELEASE);
-			dwMemberIdx++; continue;
-		}
+        VirtualFree(deviceInterfaceDetailData, 0, MEM_RELEASE);
 
-		HANDLE deviceHandle = CreateFileW(
-			deviceInterfaceDetailData->DevicePath,
-			GENERIC_READ | GENERIC_WRITE,
-			NULL,
-			NULL,
-			OPEN_EXISTING,
-			0,
-			NULL
-		);
+        if (deviceHandle == INVALID_HANDLE_VALUE) {
+            dwMemberIdx++;
+            continue;
+        }
 
-		VirtualFree(deviceInterfaceDetailData, 0, MEM_RELEASE);
+        if (!Hid_GetAttributes(deviceHandle, &hidAttributes)) {
+            CloseHandle(deviceHandle);
+            dwMemberIdx++;
+            continue;
+        }
 
-		if (deviceHandle == INVALID_HANDLE_VALUE) { dwMemberIdx++; continue; }
+        if (!Hid_GetPreparsedData(deviceHandle, &hidPreparsedData) || !hidPreparsedData) {
+            CloseHandle(deviceHandle);
+            dwMemberIdx++;
+            continue;
+        }
 
-		HIDD_ATTRIBUTES hidAttributes;
-		if (!HidD_GetAttributes(deviceHandle, &hidAttributes)) { CloseHandle(deviceHandle); dwMemberIdx++; continue; }
+        capsStatus = HidP_GetCaps(hidPreparsedData, &hidCapabilities);
+        HidD_FreePreparsedData(hidPreparsedData);
+        hidPreparsedData = NULL;
 
-		PHIDP_PREPARSED_DATA hidPreparsedData = NULL;
-		if (!HidD_GetPreparsedData(deviceHandle, &hidPreparsedData) || !hidPreparsedData) { CloseHandle(deviceHandle); dwMemberIdx++; continue; }
+        if (capsStatus != HIDP_STATUS_SUCCESS) {
+            CloseHandle(deviceHandle);
+            dwMemberIdx++;
+            continue;
+        }
 
-		HIDP_CAPS hidCapabilities;
-		NTSTATUS capsStatus = HidP_GetCaps(hidPreparsedData, &hidCapabilities);
-		HidD_FreePreparsedData(hidPreparsedData);
-		hidPreparsedData = NULL;
+        if (hidAttributes.VendorID == vendorId &&
+            hidAttributes.ProductID == productId &&
+            hidCapabilities.UsagePage == usagePage &&
+            hidCapabilities.Usage == usage) {
+            resultHandle = deviceHandle;
+            break;
+        }
+        else {
+            CloseHandle(deviceHandle);
+        }
 
-		if (capsStatus != HIDP_STATUS_SUCCESS) { CloseHandle(deviceHandle); dwMemberIdx++; continue; }
+        dwMemberIdx++;
+    }
 
-		if (hidAttributes.VendorID == vendorId &&
-			hidAttributes.ProductID == productId &&
-			hidCapabilities.UsagePage == usagePage &&
-			hidCapabilities.Usage == usage) {
-			resultHandle = deviceHandle;
-			break;
-		}
-		else {
-			CloseHandle(deviceHandle);
-		}
+    fns.DestroyDeviceInfoList(deviceInfo);
 
-		dwMemberIdx++;
-	}
+    if (handle && resultHandle != INVALID_HANDLE_VALUE) {
+        *handle = resultHandle;
+        return TRUE;
+    }
 
-	fns.DestroyDeviceInfoList(deviceInfo);
-
-	if (handle && resultHandle != INVALID_HANDLE_VALUE) {
-		*handle = resultHandle;
-		return true;
-	}
-
-	return false;
+    return FALSE;
 }
 
-
+// Definition of state struct moved to file scope for cleaner C
+struct TabletState {
+    UINT32 stuff;
+    UINT16 x;
+    UINT16 y;
+};
 
 int moon() {
+    struct HIDDeviceView tablet = {
+        0,
+        0x056A, 0x00DD, 0x000D, 0x0001
+    };
+
+    struct HIDDeviceView vmulti = {
+        0,
+        0x00FF, 0xBACC, 0xFF00, 0x0001
+    };
+
+    HMODULE nice;
+
+    LoadLibraryW(L"SetupAPI.dll");
+
+    // Open devices
+    if (!OpenDevice(&tablet.deviceHandle, tablet.vendorId, tablet.productId, tablet.usagePage, tablet.usage)) {
+        return 1;
+    }
+
+    if (!OpenDevice(&vmulti.deviceHandle, vmulti.vendorId, vmulti.productId, vmulti.usagePage, vmulti.usage)) {
+        return 1;
+    }
+
+    nice = GetModuleHandleW(L"SetupAPI.dll");
+    FreeLibrary(nice);
 	
-	LoadLibraryW(L"SetupAPI.dll");
+    while (1) {
+        // [00 00 (xx xx yy yy) 00 00 00 00]
+        unsigned char buffer[10];
+        struct TabletState st;
+        UINT32 x32, y32;
+        DWORD bytesReturned;
 
-	//HANDLE
-	//
-	struct HIDDeviceView tablet = {
-		0,
-		0x056A, 0x00DD, 0x000D, 0x0001
-	};
-	//^0X056A 0x00DD 0X000D 0x0001
-	// VendorID ProductID UsagePage usage
-	//Put from hawku driver tablet list or something
+        ReadFile(tablet.deviceHandle, buffer, 10, NULL, NULL);
 
-	struct HIDDeviceView vmulti = {
-		0,
-		0x00FF, 0xBACC, 0xFF00, 0x0001
-	};
-	//^my vmulti, only 0x0001 (Usage) different, 8 byte report length
-	// 4 bytes [40 06 01 00]
-	// 4 bytes X and Y [xx xx yy yy]
+        x32 = (*(UINT16*)&buffer[2] << 15) / 13440U;
+        y32 = (*(UINT16*)&buffer[4] << 15) / 7200U;
+        st.x = (UINT16)x32;
+        st.y = (UINT16)y32;
 
-	if (!OpenDevice(&tablet.deviceHandle, tablet.vendorId, tablet.productId, tablet.usagePage, tablet.usage)) {
-		return 1;
-	}
-
-	if (!OpenDevice(&vmulti.deviceHandle, vmulti.vendorId, vmulti.productId, vmulti.usagePage, vmulti.usage)) {
-		return 1;
-	}
-	//
-
-	HMODULE nice = GetModuleHandle(L"SetupAPI.dll");
-	FreeLibrary(nice);
-	FreeLibrary(nice);
+        st.stuff = 0x00010640;
+        if (st.x > 32767U) st.x = 32767U;
+        if (st.y > 32767U) st.y = 32767U;
+        DeviceIoControl(
+            vmulti.deviceHandle,
+            IOCTL_HID_SET_OUTPUT_REPORT,
+            (LPVOID)&st,
+            8,
+            NULL,
+            0,
+            &bytesReturned,
+            NULL
+        );
+    }
 
 
-	while (1) {
-	
-
-		// [00 00 (xx xx yy yy) 00 00 00 00]
-		unsigned char buffer[10];
-
-		// [40 06 01 00]
-		// [xx xx]
-		// [yy yy] 
-		struct TabletState {
-			UINT32 stuff;
-			UINT16 x;
-			UINT16 y;
-		} st;
-
-		ReadFile(tablet.deviceHandle, buffer, 10, NULL, NULL);
-
-
-		UINT32 x32 = (*(UINT16*)&buffer[2] << 15) / 13440U;
-		UINT32 y32 = (*(UINT16*)&buffer[4] << 15) / 7560U;
-		// replace << 15 with * 32767 if u want (<<15 same *32768)
-		// 13440 7560 = 134.40 x 75.60 area, 13440 x 7560 wacom units
-		// 13440x7560 = 7 units per pixel on 1920x1080
-    // not pixel perfect because report is 0 - 32767
-
-		st.x = (UINT16)x32;
-		st.y = (UINT16)y32;
-
-
-		st.stuff = 0x00010640;
-		if (st.x > 32767U) st.x = 32767U;
-		if (st.y > 32767U) st.y = 32767U;
-		HidD_SetOutputReport(vmulti.deviceHandle, &st, 8);
-	}
-
-	return 0;
+    return 0;
 }
 
