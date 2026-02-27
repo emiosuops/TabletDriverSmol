@@ -13,8 +13,8 @@
 13440 = area in wacom counts, 134.40 mm
 
 7560 = area in tablet counts, 75.60 mm
-5.
-6. WIP
+
+5. WIP
 
 all code fits in 1 page on disk and in ram (sub 4 kb)
 
