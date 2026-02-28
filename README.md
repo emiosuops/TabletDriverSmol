@@ -1,4 +1,4 @@
-ONLY FOR MY MODDED VMULTI SO FAR
+use SendInput version to not need my modded vmulti
 
 Change settings by opening exe in notepad, search for 056a
 
@@ -23,3 +23,6 @@ lowest cpu usage of any osu tablet driver aka 0.00% perma (11900k)
 
 
 Some tablets need setfeature and wont work yet
+
+
+More perf improvements to come
