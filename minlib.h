@@ -36,7 +36,7 @@ int myisalpha(int c)
 	return 0;
 }
 long
-strtol(const char* nptr, char** endptr, register int base)
+a_strtol(const char* nptr, char** endptr, register int base)
 {
 	register const char* s = nptr;
 	register unsigned long acc;
@@ -112,4 +112,5 @@ strtol(const char* nptr, char** endptr, register int base)
 	if (endptr != 0)
 		*endptr = (char*)(any ? s - 1 : nptr);
 	return (acc);
+
 }
