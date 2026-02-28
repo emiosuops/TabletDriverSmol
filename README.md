@@ -16,7 +16,9 @@ Change settings by opening exe in notepad, search for 056a
 
 
 all code fits in 1 page on disk and in ram (sub 4 kb)
+
 main loop fits on 2 cachelines atm
+
 lowest cpu usage of any osu tablet driver aka 0.00% perma (11900k)
 
 
