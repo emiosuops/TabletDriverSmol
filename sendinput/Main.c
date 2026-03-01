@@ -4,7 +4,6 @@
 #include "minlib.h"
 #include "hidy.h"
 #include <winuser.h>
-
 #ifndef ULONG_MAX
 #define	ULONG_MAX	((unsigned long)(~0L))		/* 0xFFFFFFFF */
 #endif
@@ -122,7 +121,7 @@ int OpenDevice(HANDLE* handle, USHORT vendorId, USHORT productId, USHORT usagePa
             0,
             NULL,
             OPEN_EXISTING,
-            0,
+            FILE_FLAG_OVERLAPPED,
             NULL
         );
 
@@ -196,7 +195,7 @@ int moon() {
     };
 
 
-    HMODULE nice;
+
 
     LoadLibraryW(L"SetupAPI.dll");
 
@@ -205,41 +204,50 @@ int moon() {
         return 1;
     }
 
-
+    HMODULE nice = GetModuleHandleW(L"SetupAPI.dll");
     FreeLibrary(nice);
+    HMODULE lol = GetModuleHandleW(L"DevObj.dll");
+    FreeLibrary(lol);
+    HMODULE wtf = GetModuleHandleW(L"wintrust.dll");
+    FreeLibrary(wtf);
 
     ULONG CurrentRes = 0;
     NtSetTimerResolution(5024, TRUE, &CurrentRes);
 
 
     DWORD bytesReturned;
+    DWORD bytesRead;
 
-
-    unsigned char buffer[10];
-
+    BYTE buffer[10];
+    OVERLAPPED ov = { 0 };
+    ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     INPUT input;
     input.type = 0;
     input.mi.mouseData = 0;
     input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE_NOCOALESCE;
+    
     while (1) {
 
-        ReadFile(tablet.deviceHandle, buffer, 10, &bytesReturned, NULL);
+        ReadFile(tablet.deviceHandle, &buffer, 10, &bytesRead, &ov);
+  
+
+        WaitForSingleObjectEx(ov.hEvent, INFINITE, 1);
+
+        GetOverlappedResult(
+            tablet.deviceHandle,
+            &ov,
+            &bytesReturned,
+            TRUE
+        );
         UINT32 xy = *(const UINT32*)(buffer + 2);
 
-        UINT16 rawX = (UINT16)xy;
-        UINT16 rawY = (UINT16)(xy >> 16);
-        if (rawX == 00 || rawY == 0) {
+        UINT32 rawX = (UINT16)xy;
+        UINT32 rawY = (UINT16)(xy >> 16);
+        if (rawX == 0 || rawY == 0) {
             continue;
         }
-        int tmpX = (rawX << 16) / ARX;
 
-
-        input.mi.dx = (tmpX > 65536) ? 65535 : (UINT16)tmpX;
-
-        int tmpY = (rawY << 16) / ARY;
-        input.mi.dy = (tmpY > 65535) ? 65535 : (UINT16)tmpY;
-
-        SendInput(1, &input, sizeof(INPUT));
+        SetCursorPos(rawX/7, rawY/7);
 
     }
 
