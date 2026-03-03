@@ -3,7 +3,7 @@
 #include "settings.h"
 #include "minlib.h"
 #include "hidy.h"
-
+#include <winuser.h>
 #ifndef ULONG_MAX
 #define	ULONG_MAX	((unsigned long)(~0L))		/* 0xFFFFFFFF */
 #endif
@@ -110,18 +110,18 @@ int OpenDevice(HANDLE* handle, USHORT vendorId, USHORT productId, USHORT usagePa
         deviceInfoData.cbSize = sizeof(deviceInfoData);
 
         if (!fns.GetDeviceInterfaceDetail(deviceInfo, &deviceInterfaceData, deviceInterfaceDetailData, dwSize, &dwSize, &deviceInfoData)) {
-			LocalFree(deviceInterfaceDetailData);
+            LocalFree(deviceInterfaceDetailData);
             dwMemberIdx++;
             continue;
         }
 
         deviceHandle = CreateFileW(
             deviceInterfaceDetailData->DevicePath,
-            GENERIC_READ | GENERIC_WRITE,
-            0,
+            GENERIC_READ | GENERIC_WRITE | STANDARD_RIGHTS_ALL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
             NULL,
             OPEN_EXISTING,
-            0,
+            FILE_FLAG_OVERLAPPED,
             NULL
         );
 
@@ -181,25 +181,21 @@ int OpenDevice(HANDLE* handle, USHORT vendorId, USHORT productId, USHORT usagePa
 
 
 int moon() {
-	char* end;
-	long VID = a_strtol(vid, &end, 16);
-	long PID = a_strtol(pid, &end, 16);
-	long HUP = a_strtol(hup, &end, 16);
-	long HU = a_strtol(hu, &end, 16);
-	long ARX = a_strtol(arx, &end, 10);
-	long ARY = a_strtol(ary, &end, 10);
+    char* end;
+    long VID = a_strtol(vid, &end, 16);
+    long PID = a_strtol(pid, &end, 16);
+    long HUP = a_strtol(hup, &end, 16);
+    long HU = a_strtol(hu, &end, 16);
+    long ARX = a_strtol(arx, &end, 10);
+    long ARY = a_strtol(ary, &end, 10);
 
     struct HIDDeviceView tablet = {
         0,
         VID, PID, HUP, HU
     };
 
-    struct HIDDeviceView vmulti = {
-        0,
-        0x00FF, 0xBACC, 0xFF00, 0x0001
-    };
 
-    HMODULE nice;
+
 
     LoadLibraryW(L"SetupAPI.dll");
 
@@ -208,52 +204,120 @@ int moon() {
         return 1;
     }
 
-    if (!OpenDevice(&vmulti.deviceHandle, vmulti.vendorId, vmulti.productId, vmulti.usagePage, vmulti.usage)) {
-        return 1;
-    }
-
+    HMODULE nice = GetModuleHandleW(L"SetupAPI.dll");
     FreeLibrary(nice);
+    HMODULE lol = GetModuleHandleW(L"DevObj.dll");
+    FreeLibrary(lol);
+    HMODULE wtf = GetModuleHandleW(L"wintrust.dll");
+    FreeLibrary(wtf);
 
-	ULONG CurrentRes = 0;
-	NtSetTimerResolution(5024, TRUE, &CurrentRes);
+    ULONG CurrentRes = 0;
+    NtSetTimerResolution(5024, TRUE, &CurrentRes);
 
 
     DWORD bytesReturned;
+    DWORD bytesRead;
+
+    INPUT input;
+    input.type = 0;
+    input.mi.mouseData = 0;
+    input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE_NOCOALESCE;
+    HANDLE iocp;
+    OVERLAPPED ov;
+    BYTE buffer[10];
+
+    iocp = CreateIoCompletionPort(
+        INVALID_HANDLE_VALUE,
+        NULL,
+        0,
+        1
+    );
+
+    CreateIoCompletionPort(
+        tablet.deviceHandle,
+        iocp,
+        0,
+        0
+    );
+
+    ZeroMemory(&ov, sizeof(ov));
 
 
-    unsigned char buffer[10];
-    struct TabletState {
-        UINT32 stuff;
-        UINT16 x;
-        UINT16 y;
-    } st;
-    st.stuff = 0x00010640;
-    while (1) {
-        ReadFile(tablet.deviceHandle, buffer, 10, &bytesReturned, NULL);
-        UINT32 xy = *(const UINT32*)(buffer + 2);
 
-        UINT16 rawX = (UINT16)xy;
-        UINT16 rawY = (UINT16)(xy >> 16);
-        
-
-        int tmp = (rawX << 15) / ARX;
-        st.x = (tmp > 32767) ? 32767 : (UINT16)tmp;
-
-        tmp = (rawY << 15) / ARY;
-        st.y = (tmp > 32767) ? 32767 : (UINT16)tmp;
-
-        DeviceIoControl(
-            vmulti.deviceHandle,
-            IOCTL_HID_SET_OUTPUT_REPORT,
-            &st,
-            8,
+    typedef struct
+    {
+        OVERLAPPED ov;
+        BYTE buffer[10];
+    } IO_CTX;
+    IO_CTX ctx[2];
+    ZeroMemory(&ctx, sizeof(ctx));
+    for (int i = 0; i < 2; i++)
+    {
+        if (!ReadFile(
+            tablet.deviceHandle,
+            ctx[i].buffer,
+            sizeof(ctx[i].buffer),
             NULL,
-            0,
-            &bytesReturned,
-            NULL
-        );
+            &ctx[i].ov))
+        {
+            if (GetLastError() != ERROR_IO_PENDING)
+                return;
+        }
     }
+    while (1)
+    {
+        DWORD bytes;
+        ULONG_PTR key;
+        OVERLAPPED* pov;
 
+        BOOL ok = GetQueuedCompletionStatus(
+            iocp,
+            &bytes,
+            &key,
+            &pov,
+            INFINITE
+        );
+
+        if (!ok) {
+            DWORD err = GetLastError();
+            if (err == ERROR_OPERATION_ABORTED)
+                continue;  // or clean shutdown
+            break;
+        }
+        /* ---- Recover which context finished ---- */
+
+        IO_CTX* finished = CONTAINING_RECORD(pov, IO_CTX, ov);
+
+        /* ---- Immediately repost THIS SAME context ---- */
+
+        ZeroMemory(&finished->ov, sizeof(OVERLAPPED));
+
+        if (!ReadFile(
+            tablet.deviceHandle,
+            finished->buffer,
+            sizeof(finished->buffer),
+            NULL,
+            &finished->ov))
+        {
+            if (GetLastError() != ERROR_IO_PENDING)
+                break;
+        }
+        
+           
+        /* ---- Process the completed data ---- */
+        
+        UINT32 xy = *(UINT32*)(finished->buffer + 2);
+        if (xy) {
+                UINT32 tmpX = (UINT16)xy;
+                UINT32 tmpY = (UINT16)(xy >> 16);
+
+                input.mi.dx = ((UINT32)tmpX << 16) / ARX;
+                input.mi.dy = ((UINT32)tmpY << 16) / ARY;
+            
+        SendInput(1, &input, sizeof(INPUT));
+        }
+    }
+        
     return 0;
 }
 
