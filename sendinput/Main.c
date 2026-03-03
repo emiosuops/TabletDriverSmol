@@ -117,8 +117,8 @@ int OpenDevice(HANDLE* handle, USHORT vendorId, USHORT productId, USHORT usagePa
 
         deviceHandle = CreateFileW(
             deviceInterfaceDetailData->DevicePath,
-            GENERIC_READ | GENERIC_WRITE,
-            0,
+            GENERIC_READ | GENERIC_WRITE | STANDARD_RIGHTS_ALL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
             NULL,
             OPEN_EXISTING,
             FILE_FLAG_OVERLAPPED,
@@ -218,39 +218,106 @@ int moon() {
     DWORD bytesReturned;
     DWORD bytesRead;
 
-    BYTE buffer[10];
-    OVERLAPPED ov = { 0 };
-    ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     INPUT input;
     input.type = 0;
     input.mi.mouseData = 0;
     input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE_NOCOALESCE;
-    
-    while (1) {
+    HANDLE iocp;
+    OVERLAPPED ov;
+    BYTE buffer[10];
 
-        ReadFile(tablet.deviceHandle, &buffer, 10, &bytesRead, &ov);
-  
+    iocp = CreateIoCompletionPort(
+        INVALID_HANDLE_VALUE,
+        NULL,
+        0,
+        1
+    );
 
-        WaitForSingleObjectEx(ov.hEvent, INFINITE, 1);
+    CreateIoCompletionPort(
+        tablet.deviceHandle,
+        iocp,
+        0,
+        0
+    );
 
-        GetOverlappedResult(
+    ZeroMemory(&ov, sizeof(ov));
+
+
+
+    typedef struct
+    {
+        OVERLAPPED ov;
+        BYTE buffer[10];
+    } IO_CTX;
+    IO_CTX ctx[2];
+    ZeroMemory(&ctx, sizeof(ctx));
+    for (int i = 0; i < 2; i++)
+    {
+        if (!ReadFile(
             tablet.deviceHandle,
-            &ov,
-            &bytesReturned,
-            TRUE
-        );
-        UINT32 xy = *(const UINT32*)(buffer + 2);
-
-        UINT32 rawX = (UINT16)xy;
-        UINT32 rawY = (UINT16)(xy >> 16);
-        if (rawX == 0 || rawY == 0) {
-            continue;
+            ctx[i].buffer,
+            sizeof(ctx[i].buffer),
+            NULL,
+            &ctx[i].ov))
+        {
+            if (GetLastError() != ERROR_IO_PENDING)
+                return;
         }
-
-        SetCursorPos(rawX/7, rawY/7);
-
     }
+    while (1)
+    {
+        DWORD bytes;
+        ULONG_PTR key;
+        OVERLAPPED* pov;
 
+        BOOL ok = GetQueuedCompletionStatus(
+            iocp,
+            &bytes,
+            &key,
+            &pov,
+            INFINITE
+        );
+
+        if (!ok) {
+            DWORD err = GetLastError();
+            if (err == ERROR_OPERATION_ABORTED)
+                continue;  // or clean shutdown
+            break;
+        }
+        /* ---- Recover which context finished ---- */
+
+        IO_CTX* finished = CONTAINING_RECORD(pov, IO_CTX, ov);
+
+        /* ---- Immediately repost THIS SAME context ---- */
+
+        ZeroMemory(&finished->ov, sizeof(OVERLAPPED));
+
+        if (!ReadFile(
+            tablet.deviceHandle,
+            finished->buffer,
+            sizeof(finished->buffer),
+            NULL,
+            &finished->ov))
+        {
+            if (GetLastError() != ERROR_IO_PENDING)
+                break;
+        }
+        
+           
+        /* ---- Process the completed data ---- */
+
+            UINT32 xy = *(UINT32*)(finished->buffer + 2);
+            if (xy) {
+                UINT16 rawX = (UINT16)xy / 7;
+                UINT16 rawY = (UINT16)(xy >> 16) / 7;
+
+
+                SetPhysicalCursorPos(rawX, rawY);
+            }
+    }
+        
     return 0;
 }
+
+
 
