@@ -306,18 +306,20 @@ int moon() {
            
         /* ---- Process the completed data ---- */
 
-            UINT32 xy = *(UINT32*)(finished->buffer + 2);
-            if (xy) {
-                UINT16 rawX = (UINT16)xy / 7;
-                UINT16 rawY = (UINT16)(xy >> 16) / 7;
+        UINT32 xy = *(UINT32*)(finished->buffer + 2);
+        if (xy) {
+                UINT32 tmpX = (UINT16)xy;
+                UINT32 tmpY = (UINT16)(xy >> 16);
 
-
-                SetPhysicalCursorPos(rawX, rawY);
-            }
+                input.mi.dx = ((UINT32)tmpX << 16) / ARX;
+                input.mi.dy = ((UINT32)tmpY << 16) / ARY;
+            
+        SendInput(1, &input, sizeof(INPUT));
     }
         
     return 0;
 }
+
 
 
 
