@@ -2,6 +2,10 @@ use SendInput version to not need my modded vmulti
 
 Change settings by opening exe in notepad, search for 056a
 
+Features not included: moving top left of area away from top left of tablet (will be with offset)
+
+Mapping to multiple monitors (i dont have rn, but I think it will require shrink because the full area will be mapped onto all screens (non-negotiable with sendinput)
+
 0X056A = VID (Vendor UD)
 
 0X00DD = PID (Product ID)
@@ -26,3 +30,4 @@ Some tablets need setfeature and wont work yet
 
 
 More perf improvements to come
+
